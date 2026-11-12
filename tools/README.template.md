@@ -29,8 +29,8 @@ Folders under the host directory:
 | `IN/` | Drop folder. The outside layer writes inbound files here. |
 | `STAGE/` | Result files made by this batch. Not yet visible to the outside layer. |
 | `OUT/` | Released result files (confirm, reject) and extract files. |
-| `ARCH/` | Processed inbound files. Re-sent copies get the suffix `.DUPnnnnnnnn`. |
-| `ERR/` | Files that were refused as a whole (unreadable, unknown source, wrong name, different content). |
+| `ARCH/` | Inbound files that were processed (their records applied or rejected one by one). Re-sent copies of processed files get the suffix `.DUPnnnnnnnn`. |
+| `ERR/` | Files that were refused as a whole: unreadable, unknown source, wrong name, different content on a re-send, and trailer or count/hash refusals (`F02`, `F03`). |
 | `MASTER/` | Master files, one fixed-width file per table (`ITM.DAT` ...). |
 | `CTL/` | Control files: batch number, sequences, sources, ledger, alarms, extract control, window. |
 | `LOG/` | `BATCH.LOG`. |
@@ -49,13 +49,14 @@ Field kinds: `A` text (left aligned, space filled) - `N` unsigned number (right 
   * Next expected number: processed. Used up even if the file was rejected as a whole.
   * Lower than expected (re-send): not processed. Same content: reject record `F04`. Different content: reject record `F08`, alarm `A02`, file to `ERR/`.
   * Higher than expected (gap): alarm `A01`. The file and every later file of that source are **held** in `IN/`. Other sources continue. If the missing file arrives, the next batch processes it and the held files in order, and the alarm closes. The operator can instead choose **Skip gap** (Batch Control option 5): the missing numbers are written to the ledger as `SK` and processing resumes at the lowest held file.
-* **Partial failure.** Each detail record is validated and applied alone. Bad records go to the reject file with a code. The rest of the file still processes. A file-level fault (trailer missing `F02`, count or hash mismatch `F03`, name not equal to header `F07`) rejects the whole file.
+* **Partial failure.** Each detail record is validated and applied alone. Bad records go to the reject file with a code. The rest of the file still processes. A file-level fault (trailer missing `F02`, count or hash mismatch `F03`, name not equal to header `F07`) rejects the whole file: it goes to `ERR/` and its control number is used up.
 * **Whole-file refusals.** The file **name** (`SOURCE.NNNNNNNN`) says who sent it and which number it is.
   * Name cannot be read (for example `notes.txt`): file to `ERR/`, alarm `A03`.
   * Source in the name is not registered: file to `ERR/`, alarm `A04`.
   * Header unreadable (garbage, empty, bad header date) and the number is the next expected: file to `ERR/`, alarm `A03` kept, the number is **used up** (ledger row `UR`), no result file (the sender is not trusted). The sender's next file processes normally.
   * Header says another source or number than the name (`F07`): the reject goes under the **name's** source. If it is that source's next number, the number is used up. The header's source is not touched.
   * A late file for a number the operator skipped is a duplicate: archived, reject `F04`, no `A02`.
+  * **A used-up number stays used up.** A file refused as a whole burns its number. A corrected re-send under the same number is different content (`F08` + alarm `A02`). The way out is a fresh control number agreed with the operator. A re-send of an unreadable file is judged by its bytes the same way: identical gives `F04`, different gives `F08` + `A02`.
   Operators register sources first (Batch Control option 7, or `python -m legacy_wms HOSTDIR src SOURCEID`).
 * **Commit.** Master data, ledger and control files are saved at the end of the batch. Files are replaced, never edited in place.
 
@@ -84,12 +85,12 @@ Field use by act (USR is required on every act and must be a known user):
 | ACT | Fields used | Effect |
 |---|---|---|
 | RCPT | DOC=ASN no, LIN=ASN line, ITM, QTY, DOR=inbound door, TLC=new pallet no | Creates inbound pallet in `STG-<door>` lane, stock status `PP`. ASN becomes `RG`, or `RC` when every line is complete. |
-| PUTA | ITM, QTY, FLC=pallet, TLC=bin | Moves stock from pallet to bin (status `AV`). Pallet becomes `PC` when empty. Closes the open putaway task for that pallet and item. |
+| PUTA | ITM, QTY, FLC=pallet, TLC=bin | Moves stock from pallet to bin (status `AV`). Pallet becomes `PC` when empty. Closes the open putaway task for that pallet and item when the total put away for that pallet and item reaches the task quantity (accumulation: part putaways leave the task open). |
 | ADJT | ITM, FLC=bin, QTY, SGN (`+` or `-`), RSN (adjust reason) | Adds or removes bin stock. |
 | RLSE | DOC=order | `NW` to `RL`. |
-| PICK | DOC=order, LIN (0 = any), ITM, QTY, FLC=bin | Bin stock moves to pick location `PK-<order>` (status `PK`). Line and order status advance. Closes the matching pick task. When the last line is picked (or shorted) the order is `PD` and the host makes one open pack task (`TKTY` = `PA`) for it. |
-| SHRT | DOC=order, LIN | Shorts the rest of a line (`SX`). |
-| PACK | DOC=order | Order `PD` to `PK`. Makes delivery `OD-nnnn` and the next outbound pallet `PAL-nnn` (status `SL`, `PAL.DLNO` = the delivery). The order's picked stock moves from `PK-<order>` to the pallet (stock status `SL`). Closes the open pack task. |
+| PICK | DOC=order, LIN (0 = any), ITM, QTY, FLC=bin | Bin stock moves to pick location `PK-<order>` (status `PK`). Line and order status advance. Closes the pick task of that order line when the picked quantity of that line reaches the task quantity (accumulation per line). When the last line is picked (or shorted) the order is `PD` and the host makes one open pack task (`TKTY` = `PA`) for it, but only if something was picked: an order with nothing picked gets no pack task. |
+| SHRT | DOC=order, LIN | Shorts the rest of a line (`SX`) and closes that line's open pick task. Raises one exception (kind `SP`, entity `OR`, severity `M`) naming order, line, item, ordered and picked. Shorts are flagged, never blocked. |
+| PACK | DOC=order | Order `PD` to `PK`. Makes delivery `OD-nnnn` and the next outbound pallet `PAL-nnn` (status `SL`, `PAL.DLNO` = the delivery). The order's picked stock moves from `PK-<order>` to the pallet (stock status `SL`). Closes the open pack task. If any line is picked below its ordered quantity, one `SP` exception is raised on the order (ordered and packed totals). Refused `B12` when nothing was picked. |
 | LOAD | DOC=delivery, TLC=load | Puts a packed delivery on a load. Load becomes `LG`. The delivery's pallets move to the lane `STG-<load door>`. |
 | SHIP | DOC=load, DOR=outbound door of the load, TLC=seal no | Ships the load. Deliveries, orders, pallets (to `SH`), appointment advance. Pallet stock goes to zero. |
 | CNTS | ITM, FLC=bin, QTY=counted | Writes the count (opens a new `CC-nnn` if none open). A variance makes exception kind `CV`. |
@@ -215,8 +216,9 @@ The dataset block `labor_overload` is a scenario note, not warehouse state. It i
 * Pallet ids and task ids continue after the highest dataset number (`PAL-nnn`, `TK-nnnn`). A minted id skips any id already in use.
 * Unknown source or unreadable file gives an alarm and no result file.
 * Known limit: the batch commit is not atomic. File moves and the save of master and control files are separate steps, and an interruption between them can leave them out of step. Counter reconciliation protects the data: when the host opens, every id counter is raised to the highest number in use, and every allocation skips ids already in use, so a lost or old `SEQ.CTL` can never overwrite a live record.
-* Tasks close by accumulation: a putaway task closes when the putaway for its pallet and item reaches the task quantity. A pick task closes when picks of that item from that bin for that order reach the task quantity (counted from the ledger).
-* PACK is refused (`B12`) when the order's picked quantity is zero (fully shorted).
+* Tasks close by accumulation. Putaways are measured per pallet and item (counted from the ledger): the task closes when the total put away reaches the task quantity. Picks are measured per line: the task closes when the picked quantity of its own line reaches the task quantity. SHRT also closes the line's pick task, because a shorted line is done being picked.
+* Shorts are flagged, never blocked. Picking or packing some quantity, less than ordered, is ordinary work. SHRT raises an `SP` exception for the shortfall (order, line, item, ordered, picked). A PACK that goes out short raises one more `SP` exception on the order (total ordered, total packed). A line that was part picked and then shorted is flagged once at the SHRT. Full picks and full packs raise nothing.
+* Zero is not a short. Packing needs something picked. An order whose lines are all shorted has nothing to pack: no pack task is made, and PACK is refused `B12`. Its record is the `SP` exceptions that SHRT raised.
 * ADJT needs `SGN` (`+` or `-`). A blank sign is `R07`.
 * An unexpected error in one record rejects that record `R01`, undoes anything it half did, and is written to `BATCH.LOG`. The rest of the batch goes on.
 * An F07 file with a number that is not the next expected is rejected and moved to `ERR/` without using a number.

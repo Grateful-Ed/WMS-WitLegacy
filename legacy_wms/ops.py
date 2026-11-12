@@ -104,6 +104,9 @@ def _eval_order_picked(h, o, now, last_bin=""):
     ls = _lines(h, o["ORNO"])
     if ls and all(l["LNST"] in ("PD", "SX") for l in ls) and o["ORST"] != "PD":
         o["ORST"] = "PD"
+        if sum(l["PQTY"] for l in ls) == 0:      # nothing picked: nothing to pack
+            h.touch(o)
+            return
         loc = h.get("LOC", last_bin) if last_bin else None
         h.put("TSK", {"TKNO": h.alloc("TSK"), "TKTY": "PA", "TKST": "OP",
                       "ZNID": loc["LCZN"] if loc else "", "ASGN": "", "WVNO": o["WVNO"],
@@ -139,13 +142,23 @@ def apply_act(h, rec, now):
 def apply_act_safe(h, rec, now, log=None):
     """apply_act, but an unexpected error rejects the record (R01) and rolls
     back anything it half did. Rejects and layout errors pass through."""
-    snap = copy.deepcopy((h.t, h.seq))
+    snap = copy.deepcopy((h.t, h.seq, h.alarms, h.ledger, h.src, h.ext))
     try:
         apply_act(h, rec, now)
     except Reject:
         raise
     except Exception as e:      # noqa: BLE001 - one bad record must not stop the batch
-        h.t, h.seq = snap
+        t, seq, alarms, ledger, src, ext = snap      # restore in place: no stale references
+        for name in h.t:
+            h.t[name] = t[name]
+        h.seq.clear()
+        h.seq.update(seq)
+        h.alarms[:] = alarms
+        h.ledger[:] = ledger
+        h.src.clear()
+        h.src.update(src)
+        h.ext.clear()
+        h.ext.update(ext)
         if log:
             log(f"UNEXPECTED ERROR IN ACT {rec.get('ACT')} SEQ {rec.get('SEQ')}: "
                 f"{type(e).__name__} {e}")
@@ -253,11 +266,9 @@ def _pick(h, rec, adate, atime, now):
     h.touch(line)
     o["ORST"] = "PI"
     _eval_order_picked(h, o, now, rec["FLC"])
-    done = rec["QTY"] + _moved(h, "PI", rec["ITM"], rec["FLC"], o["ORNO"])
     _trn(h, now, "PI", rec["ITM"], rec["FLC"], ploc, rec["QTY"], o["ORNO"])
-    for t in _open_tasks(h, "PK"):
-        if (t["ORNO"], t["LNNO"], t["FBIN"]) == (o["ORNO"], line["LNNO"], rec["FLC"]) \
-                and done >= t["QTY"]:
+    for t in _open_tasks(h, "PK"):              # a task measures its own line
+        if (t["ORNO"], t["LNNO"]) == (o["ORNO"], line["LNNO"]) and line["PQTY"] >= t["QTY"]:
             _complete_task(h, t, rec, adate, atime)
             break
 
@@ -273,6 +284,13 @@ def _shrt(h, rec, adate, atime, now):
     line["LNST"] = "SX"
     h.touch(line)
     o["ORST"] = "PI"
+    _log_exception(h, "SP", "OR", o["ORNO"], "M",
+                   f"SHORT {o['ORNO']} LINE {line['LNNO']} {line['ITNO']} "
+                   f"ORDERED {line['OQTY']} PICKED {line['PQTY']}", rec, now)
+    for t in _open_tasks(h, "PK"):              # a shorted line is done being picked
+        if (t["ORNO"], t["LNNO"]) == (o["ORNO"], line["LNNO"]):
+            _complete_task(h, t, rec, adate, atime)
+            break
     _eval_order_picked(h, o, now)
 
 
@@ -304,6 +322,11 @@ def _pack(h, rec, adate, atime, now):
     o["ORST"] = "PK"
     o["DLNO"] = dlno
     h.touch(o)
+    ls = _lines(h, o["ORNO"])
+    ordered, packed = sum(l["OQTY"] for l in ls), sum(l["PQTY"] for l in ls)
+    if packed < ordered:                        # goes out short: flag it, never block it
+        _log_exception(h, "SP", "OR", o["ORNO"], "M",
+                       f"SHORT PACK {o['ORNO']} ORDERED {ordered} PACKED {packed}", rec, now)
 
 
 def _load(h, rec, adate, atime, now):

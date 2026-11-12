@@ -88,7 +88,8 @@ TKTY = {"PK": "PICK", "PU": "PUTAWAY", "CN": "COUNT", "PA": "PACK"}
 TKST = {"OP": "OPEN", "CP": "COMPLETE"}
 CCST = {"OP": "OPEN", "CM": "COUNT MATCHED", "RC": "VARIANCE - RECOUNT"}
 EXKD = {"DM": "DAMAGE", "LB": "LOCATION BLOCKED", "CV": "COUNT VARIANCE",
-        "SR": "SHORT RECEIPT", "OR": "OVER RECEIPT", "OT": "OTHER"}
+        "SR": "SHORT RECEIPT", "OR": "OVER RECEIPT", "SP": "SHORT PICK/SHIPMENT",
+        "OT": "OTHER"}
 EXEN = {"AS": "ASN", "BN": "BIN", "OR": "ORDER", "IT": "ITEM", "OT": "OTHER"}
 EXSV = {"L": "LOW", "M": "MEDIUM", "H": "HIGH"}
 EXST = {"OP": "OPEN", "CL": "CLOSED"}
@@ -126,7 +127,8 @@ WORDS = {
     "TKST": {"open": "OP", "completed": "CP"},
     "CCST": {"open": "OP"},
     "EXKD": {"damage": "DM", "location_blocked": "LB", "count_variance": "CV",
-             "short_receipt": "SR", "over_receipt": "OR", "other": "OT"},
+             "short_receipt": "SR", "over_receipt": "OR", "short_pick": "SP",
+             "other": "OT"},
     "EXEN": {"asn": "AS", "bin": "BN", "order": "OR", "item": "IT", "other": "OT"},
     "EXSV": {"low": "L", "medium": "M", "high": "H"},
     "EXST": {"open": "OP", "closed": "CL"},

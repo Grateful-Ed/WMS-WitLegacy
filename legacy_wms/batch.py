@@ -144,7 +144,8 @@ def _process_file(h, text, hdr, name, now, confs, rejs, summ):
     row = h.src[src]
     row["LAST"] = ictl
     row["NEXT"] = ictl + 1
-    os.replace(h.p("IN", name), h.p("ARCH", name))
+    # whole-file refusals (trailer or count/hash) go to ERR with the other refusals
+    os.replace(h.p("IN", name), h.p("ERR" if disp == "RJ" else "ARCH", name))
     summ.files += 1
 
 
@@ -215,7 +216,7 @@ def _process_inbound(h, now, summ):
         row = h.src[src]
         if ictl < row["NEXT"]:
             led = _ledger_find(h, src, ictl)
-            if hdr is None:
+            if led is None and hdr is None:
                 _move(h, name, "ERR")
                 h.raise_alarm("A03", src, ictl, f"UNREADABLE {name}", now)
             elif led is not None and led["DISP"] != "SK" and led["CKSM"] != checksum(text):
@@ -238,7 +239,7 @@ def _process_inbound(h, now, summ):
             _consume(h, src, ictl, text, name, now, "UR")
         else:
             _process_file(h, text, hdr, name, now, cf, rj, summ)
-            _close_gap_alarm(h, src, row["NEXT"])
+            _close_gap_alarm(h, src, h.src[src]["NEXT"])
     _stage_results(h, now, confs, rejs)
 
 

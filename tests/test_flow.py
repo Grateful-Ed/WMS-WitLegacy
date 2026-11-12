@@ -134,10 +134,12 @@ class FlowTests(HostCase):
                           act("PICK", DOC=o, ITM=ln["ITNO"], QTY=1, FLC=bin_, USR="W-09")])
             self.assertEqual(packs(), [])             # line only part picked
 
-    def test_shorting_the_last_line_also_makes_the_pack_task(self):
+    def test_shorting_every_line_makes_no_pack_task_but_leaves_its_flag(self):
         self.send(1, [act("RLSE", DOC="SO-5006"), act("SHRT", DOC="SO-5006", LIN=1)])
-        t = [r for r in self.h.t["TSK"].values() if r["TKTY"] == "PA"]
-        self.assertEqual([(r["ORNO"], r["TKST"], r["ZNID"]) for r in t], [("SO-5006", "OP", "")])
+        self.assertEqual([r for r in self.h.t["TSK"].values() if r["TKTY"] == "PA"], [])
+        self.assertEqual(self.h.get("OHD", "SO-5006")["ORST"], "PD")
+        sp = [r for r in self.h.t["EXC"].values() if r["EXKD"] == "SP"]
+        self.assertEqual(len(sp), 1)
 
     def test_pack_task_code_does_not_collide_and_seed_accepts_pack_word(self):
         from legacy_wms.codes import TKTY, WORDS
