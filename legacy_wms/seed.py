@@ -227,6 +227,8 @@ def seed(host, ds):
     h.seq["CCN"] = _maxnum(k[0] for k in h.t["CCN"])
     h.seq["DLV"] = _maxnum(k[0] for k in h.t["DLV"])
     h.seq["TRN"] = _maxnum(k[0] for k in h.t["TRN"])
+    h.seq["PAL"] = _maxnum(k[0] for k in h.t["PAL"])
+    h.seq["TSK"] = _maxnum(k[0] for k in h.t["TSK"])
     h.batch = 0
     h.stamp = 1
     for t in LAYOUTS:      # fail early if any value does not fit a layout

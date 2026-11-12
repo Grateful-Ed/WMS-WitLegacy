@@ -81,11 +81,11 @@ Field use by act (USR is required on every act and must be a known user):
 | PUTA | ITM, QTY, FLC=pallet, TLC=bin | Moves stock from pallet to bin (status `AV`). Pallet becomes `PC` when empty. Closes the open putaway task for that pallet and item. |
 | ADJT | ITM, FLC=bin, QTY, SGN (`+` or `-`), RSN (adjust reason) | Adds or removes bin stock. |
 | RLSE | DOC=order | `NW` to `RL`. |
-| PICK | DOC=order, LIN (0 = any), ITM, QTY, FLC=bin | Bin stock moves to pick location `PK-<order>` (status `PK`). Line and order status advance. Closes the matching pick task. |
+| PICK | DOC=order, LIN (0 = any), ITM, QTY, FLC=bin | Bin stock moves to pick location `PK-<order>` (status `PK`). Line and order status advance. Closes the matching pick task. When the last line is picked (or shorted) the order is `PD` and the host makes one open pack task (`TKTY` = `PA`) for it. |
 | SHRT | DOC=order, LIN | Shorts the rest of a line (`SX`). |
-| PACK | DOC=order | Order `PD` to `PK`. Makes delivery `OD-nnnn`. |
-| LOAD | DOC=delivery, TLC=load | Puts a packed delivery on a load. Load becomes `LG`. |
-| SHIP | DOC=load, DOR=outbound door of the load, TLC=seal no | Ships the load. Deliveries, orders, pallets, appointment advance. Staged stock goes to zero. |
+| PACK | DOC=order | Order `PD` to `PK`. Makes delivery `OD-nnnn` and the next outbound pallet `PAL-nnn` (status `SL`, `PAL.DLNO` = the delivery). The order's picked stock moves from `PK-<order>` to the pallet (stock status `SL`). Closes the open pack task. |
+| LOAD | DOC=delivery, TLC=load | Puts a packed delivery on a load. Load becomes `LG`. The delivery's pallets move to the lane `STG-<load door>`. |
+| SHIP | DOC=load, DOR=outbound door of the load, TLC=seal no | Ships the load. Deliveries, orders, pallets (to `SH`), appointment advance. Pallet stock goes to zero. |
 | CNTS | ITM, FLC=bin, QTY=counted | Writes the count (opens a new `CC-nnn` if none open). A variance makes exception kind `CV`. |
 | EXCP | RSN=kind, FLG=entity, DOC=entity id, SGN=severity, TXT | Logs an exception. |
 | LABR | FLG (`ST`/`EN`), RSN=task (start), QTY=units (end) | Labor start or end. One open task per user. |
@@ -202,6 +202,9 @@ The dataset block `labor_overload` is a scenario note, not warehouse state. It i
 * Deltas can repeat rows (at-least-once). Readers replace by key.
 * Seconds in dataset times are dropped (`HHMM`).
 * Waves are not changed by acts. Wave and order status change only by `RLSE`, `PICK`, `SHRT`, `PACK`, `LOAD`, `SHIP`.
-* A packed order makes a delivery but no outbound pallet. Outbound pallets exist only from the dataset.
+* PACK makes the outbound pallet (like the dataset's own packed deliveries). Its lane is blank until LOAD sets `STG-<load door>`. One pallet carries all the stock of the order.
+* The pack move (`PK-<order>` to pallet) writes no `TRN` row, because no ledger type exists for it and the code table is held as decided. Pick and ship moves do write rows.
+* The pack task is made when the order becomes fully picked. Zone = zone of the last bin picked (blank if the last step was a `SHRT`). It is unassigned. `QTY` = total picked. `FBIN` = `PK-<order>`. `TBIN` and `PLNO` are filled when PACK closes it.
+* Pallet ids and task ids continue after the highest dataset number (`PAL-nnn`, `TK-nnnn`). A minted id skips any id already in use.
 * Unknown source or unreadable file gives an alarm and no result file.
 * The `EX-nnn`, `CC-nnn`, `OD-nnnn` and `LG-nnnnnn` ids continue after the highest dataset number.

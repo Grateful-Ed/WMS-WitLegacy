@@ -27,6 +27,21 @@ class TuiTests(HostCase):
         t = self.run_keys(["2", "SKU-1003", "61", "PAL-001", "ZA-01-03", "W-03", "", "F3"])
         self.assertIn("REJECT B06 INSUFFICIENT STOCK", t.text())
 
+    def test_packing_screen_makes_pallet_and_closes_pack_task(self):
+        from legacy_wms import ops
+        from legacy_wms.fixed import DETAIL
+        self.h.get("OHD", "SO-5006")["ORST"] = "RL"
+        rec = DETAIL.blank()
+        rec.update(ACT="SHRT", DOC="SO-5006", LIN=1, USR="W-09")
+        ops.apply_act(self.h, rec, DAY)            # last line done: pack task now open
+        self.h.save()
+        t = self.run_keys(["6", "SO-5006", "W-14", "F3"])
+        self.assertIn("ACT ACCEPTED", t.text())
+        h2 = self.reload()
+        self.assertEqual(h2.get("PAL", "PAL-009")["PLST"], "SL")
+        task = [r for r in h2.t["TSK"].values() if r["TKTY"] == "PA"][0]
+        self.assertEqual((task["TKST"], task["CPBY"]), ("CP", "W-14"))
+
     def test_f12_backs_out_of_a_form(self):
         t = self.run_keys(["1", "ASN-1003", "F12", "F3"])
         self.assertNotIn("ACT ACCEPTED", t.text())

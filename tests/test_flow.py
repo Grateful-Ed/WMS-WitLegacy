@@ -60,7 +60,8 @@ class FlowTests(HostCase):
                       act("PACK", DOC="SO-5006")])
         o = self.h.get("OHD", "SO-5006")
         self.assertEqual((o["ORST"], o["DLNO"]), ("PK", "OD-7004"))
-        self.assertEqual(self.inv("PK-SO-5006", item, "PK"), qty)
+        self.assertEqual(self.inv("PK-SO-5006", item, "PK"), 0)      # moved onto the pallet
+        self.assertEqual(self.inv("PAL-009", item, "SL"), qty)
         self.send(2, [act("LOAD", DOC="OD-7004", TLC="LD-9002")])
         self.assertEqual(self.h.get("LDS", "LD-9002")["LDST"], "LG")
         self.send(3, [act("SHIP", DOC="LD-9002", DOR="D08", TLC="SEAL-77")])
@@ -72,7 +73,83 @@ class FlowTests(HostCase):
         self.assertEqual(self.h.get("OHD", "SO-5006")["ORST"], "SH")
         self.assertEqual(self.inv("PAL-007", "SKU-1006", "SL"), 0)
         self.assertEqual(self.inv("PK-SO-5006", item, "PK"), 0)
+        self.assertEqual(self.inv("PAL-009", item, "SL"), 0)
         self.assertEqual(self.h.get("APT", "APT-202")["APST"], "CP")
+
+    def order_lines(self, orno):
+        return [r for k, r in sorted(self.h.t["OLN"].items()) if k[0] == orno]
+
+    def test_fresh_order_end_to_end_with_pallet_and_pack_task(self):
+        o = "SO-5010"                                  # open, not in a wave
+        lines = self.order_lines(o)
+        picks = []
+        for ln in lines:
+            bin_ = next(k[0] for k, r in sorted(self.h.t["INV"].items())
+                        if k[1] == ln["ITNO"] and k[2] == "AV" and r["ONHD"] >= ln["OQTY"])
+            picks.append(act("PICK", DOC=o, LIN=ln["LNNO"], ITM=ln["ITNO"], QTY=ln["OQTY"],
+                             FLC=bin_, USR="W-09"))
+        want = {(ln["ITNO"]): ln["OQTY"] for ln in lines}
+        packs = lambda: [r for r in self.h.t["TSK"].values() if r["TKTY"] == "PA"]
+        self.send(1, [act("RLSE", DOC=o)] + picks)
+        self.assertEqual(self.h.get("OHD", o)["ORST"], "PD")
+        self.assertEqual(len(packs()), 1)              # open pack task for the order
+        t = packs()[0]
+        self.assertEqual((t["ORNO"], t["TKST"], t["TKNO"]), (o, "OP", "TK-0023"))
+        self.assertEqual(t["ZNID"], self.h.get("LOC", picks[-1]["FLC"])["LCZN"])
+        self.send(2, [act("PACK", DOC=o, USR="W-14")])
+        order = self.h.get("OHD", o)
+        self.assertEqual(order["ORST"], "PK")
+        pal = self.h.get("PAL", "PAL-009")             # next after PAL-008
+        self.assertEqual((pal["PDIR"], pal["PLST"], pal["DLNO"]), ("OU", "SL", order["DLNO"]))
+        for item, qty in want.items():
+            self.assertEqual(self.inv("PAL-009", item, "SL"), qty)
+            self.assertEqual(self.inv("PK-" + o, item, "PK"), 0)
+        t = packs()[0]
+        self.assertEqual((t["TKST"], t["CPBY"], t["PLNO"]), ("CP", "W-14", "PAL-009"))
+        self.send(3, [act("LOAD", DOC=order["DLNO"], TLC="LD-9002")])
+        self.assertEqual(self.h.get("PAL", "PAL-009")["LANE"], "STG-D08")
+        self.send(4, [act("SHIP", DOC="LD-9002", DOR="D08", TLC="SEAL-1")])
+        self.assertEqual(self.reject_codes(), [])
+        self.assertEqual(self.h.get("PAL", "PAL-009")["PLST"], "SH")
+        for item in want:
+            self.assertEqual(self.inv("PAL-009", item, "SL"), 0)
+        self.assertEqual(self.h.get("OHD", o)["ORST"], "SH")
+
+    def test_pack_task_waits_for_the_last_line(self):
+        o = "SO-5010"
+        ln = self.order_lines(o)[0]
+        packs = lambda: [r for r in self.h.t["TSK"].values() if r["TKTY"] == "PA"]
+        bin_ = next(k[0] for k, r in sorted(self.h.t["INV"].items())
+                    if k[1] == ln["ITNO"] and k[2] == "AV" and r["ONHD"] >= ln["OQTY"])
+        if ln["OQTY"] > 1:
+            self.send(1, [act("RLSE", DOC=o),
+                          act("PICK", DOC=o, ITM=ln["ITNO"], QTY=1, FLC=bin_, USR="W-09")])
+            self.assertEqual(packs(), [])             # line only part picked
+
+    def test_shorting_the_last_line_also_makes_the_pack_task(self):
+        self.send(1, [act("RLSE", DOC="SO-5006"), act("SHRT", DOC="SO-5006", LIN=1)])
+        t = [r for r in self.h.t["TSK"].values() if r["TKTY"] == "PA"]
+        self.assertEqual([(r["ORNO"], r["TKST"], r["ZNID"]) for r in t], [("SO-5006", "OP", "")])
+
+    def test_pack_task_code_does_not_collide_and_seed_accepts_pack_word(self):
+        from legacy_wms.codes import TKTY, WORDS
+        self.assertEqual(len(set(TKTY)), len(TKTY))
+        self.assertEqual(WORDS["TKTY"]["pack"], "PA")
+        self.assertIn("PA", TKTY)
+
+    def test_dataset_with_a_pack_task_seeds(self):
+        import json, tempfile
+        from helpers import DATASET
+        from legacy_wms.seed import seed
+        from legacy_wms.store import Host
+        ds = json.loads(DATASET.read_text())
+        ds["tasks"].append({"id": "TK-0099", "type": "pack", "status": "open", "zone_id": None,
+                            "assigned_to": "W-14", "order_id": "SO-5007", "created_at":
+                            "2026-01-12T06:50:00Z", "completed_at": None, "completed_by": None})
+        with tempfile.TemporaryDirectory() as d:
+            h = Host.open(d)
+            seed(h, ds)
+            self.assertEqual(h.get("TSK", "TK-0099")["TKTY"], "PA")
 
     def test_pick_rules(self):
         item = self.h.get("OLN", "SO-5001", 1)["ITNO"]        # SO-5001 is released

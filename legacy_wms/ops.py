@@ -90,11 +90,31 @@ def _open_tasks(h, tkty):
             if r["TKTY"] == tkty and r["TKST"] == "OP"]
 
 
-def _eval_order_picked(h, o):
+def _eval_order_picked(h, o, now, last_bin=""):
+    """When the last line is picked or shorted the order is PD and the host
+    makes one open pack task for it (zone of the last bin picked, unassigned)."""
     ls = _lines(h, o["ORNO"])
-    if ls and all(l["LNST"] in ("PD", "SX") for l in ls):
+    if ls and all(l["LNST"] in ("PD", "SX") for l in ls) and o["ORST"] != "PD":
         o["ORST"] = "PD"
+        loc = h.get("LOC", last_bin) if last_bin else None
+        n = h.next_seq("TSK")
+        while h.get("TSK", f"TK-{n:04d}"):
+            n = h.next_seq("TSK")
+        h.put("TSK", {"TKNO": f"TK-{n:04d}", "TKTY": "PA", "TKST": "OP",
+                      "ZNID": loc["LCZN"] if loc else "", "ASGN": "", "WVNO": o["WVNO"],
+                      "ORNO": o["ORNO"], "LNNO": 0, "ITNO": "",
+                      "QTY": sum(l["PQTY"] for l in ls), "FBIN": C.PICK_PREFIX + o["ORNO"],
+                      "TBIN": "", "PLNO": "", "CCNO": "", "BNNO": "",
+                      "CRDT": now[0], "CRTM": int(now[1]), "CPDT": "00000000", "CPTM": 0,
+                      "CPBY": ""})
     h.touch(o)
+
+
+def _new_pallet_no(h):
+    n = h.next_seq("PAL")
+    while h.get("PAL", f"PAL-{n:03d}"):
+        n = h.next_seq("PAL")
+    return f"PAL-{n:03d}"
 
 
 def _log_exception(h, kind, entity, eid, sev, text, rec, now):
@@ -213,7 +233,7 @@ def _pick(h, rec, adate, atime, now):
     line["LNST"] = "PD" if line["PQTY"] + line["SQTY"] >= line["OQTY"] else "PA"
     h.touch(line)
     o["ORST"] = "PI"
-    _eval_order_picked(h, o)
+    _eval_order_picked(h, o, now, rec["FLC"])
     for t in _open_tasks(h, "PK"):
         if (t["ORNO"], t["LNNO"], t["FBIN"]) == (o["ORNO"], line["LNNO"], rec["FLC"]) \
                 and t["QTY"] == rec["QTY"]:
@@ -233,17 +253,33 @@ def _shrt(h, rec, adate, atime, now):
     line["LNST"] = "SX"
     h.touch(line)
     o["ORST"] = "PI"
-    _eval_order_picked(h, o)
+    _eval_order_picked(h, o, now)
 
 
 def _pack(h, rec, adate, atime, now):
+    """Makes the delivery and the outbound pallet it rides on. The order's
+    picked stock moves from PK-<order> to the pallet (status SL)."""
     _need(rec["DOC"] != "", "R07")
     o = _order(h, rec["DOC"])
     _need(o["ORST"] == "PD", "B12")
     n = h.next_seq("DLV")
     dlno = f"OD-{n:04d}"
+    plno = _new_pallet_no(h)
     h.put("DLV", {"DLNO": dlno, "ORNO": o["ORNO"], "DLST": "PK", "LDNO": "",
                   "SHDT": "00000000", "SHTM": 0})
+    h.put("PAL", {"PLNO": plno, "PDIR": "OU", "LANE": "", "PLST": "SL", "ASNO": "",
+                  "ASLN": 0, "DLNO": dlno})
+    ploc = C.PICK_PREFIX + o["ORNO"]
+    for k, inv in sorted(h.t["INV"].items()):
+        if k[0] == ploc and inv["ONHD"]:
+            qty = inv["ONHD"]
+            _inv_add(h, ploc, inv["ITNO"], inv["IVST"], -qty)
+            _inv_add(h, plno, inv["ITNO"], "SL", qty)
+    for t in _open_tasks(h, "PA"):
+        if t["ORNO"] == o["ORNO"]:
+            t["PLNO"], t["TBIN"] = plno, plno
+            _complete_task(h, t, rec, adate, atime)
+            break
     o["ORST"] = "PK"
     o["DLNO"] = dlno
     h.touch(o)
@@ -259,6 +295,10 @@ def _load(h, rec, adate, atime, now):
     _need(ld["LDST"] in ("PL", "LG"), "B25")
     d["LDNO"] = ld["LDNO"]
     h.touch(d)
+    for k, p in sorted(h.t["PAL"].items()):     # pallet moves to the load's door lane
+        if p["DLNO"] == d["DLNO"]:
+            p["LANE"] = C.LANE_PREFIX + ld["DRNO"]
+            h.touch(p)
     ld["LDST"] = "LG"
     h.touch(ld)
 

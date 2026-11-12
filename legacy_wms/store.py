@@ -5,7 +5,7 @@ from pathlib import Path
 from .fixed import LAYOUTS, KEYS, SRC, LDG, ALM, EXT
 
 DIRS = ["MASTER", "CTL", "IN", "STAGE", "OUT", "ARCH", "ERR", "LOG"]
-SEQ_NAMES = ["EXC", "CCN", "LBL", "DLV", "TRN"]
+SEQ_NAMES = ["EXC", "CCN", "LBL", "DLV", "TRN", "PAL", "TSK"]
 
 
 def _atomic_write(path, text):

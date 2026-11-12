@@ -84,7 +84,7 @@ LNST = {"OP": "OPEN", "PA": "PART PICKED", "PD": "PICKED", "SX": "SHORTED"}
 WVST = {"PL": "PLANNED", "RL": "RELEASED"}
 DLST = {"PK": "PACKED", "SH": "SHIPPED"}
 LDST = {"PL": "PLANNED", "LG": "LOADING", "SH": "SHIPPED"}
-TKTY = {"PK": "PICK", "PU": "PUTAWAY", "CN": "COUNT"}
+TKTY = {"PK": "PICK", "PU": "PUTAWAY", "CN": "COUNT", "PA": "PACK"}
 TKST = {"OP": "OPEN", "CP": "COMPLETE"}
 CCST = {"OP": "OPEN", "CM": "COUNT MATCHED", "RC": "VARIANCE - RECOUNT"}
 EXKD = {"DM": "DAMAGE", "LB": "LOCATION BLOCKED", "CV": "COUNT VARIANCE",
@@ -122,7 +122,7 @@ WORDS = {
     "WVST": {"planned": "PL", "released": "RL"},
     "DLST": {"packed": "PK", "shipped": "SH"},
     "LDST": {"planned": "PL", "loading": "LG", "shipped": "SH"},
-    "TKTY": {"pick": "PK", "putaway": "PU", "count": "CN"},
+    "TKTY": {"pick": "PK", "putaway": "PU", "count": "CN", "pack": "PA"},
     "TKST": {"open": "OP", "completed": "CP"},
     "CCST": {"open": "OP"},
     "EXKD": {"damage": "DM", "location_blocked": "LB", "count_variance": "CV",
