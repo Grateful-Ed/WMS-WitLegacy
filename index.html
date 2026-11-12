@@ -1,0 +1,77 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>WMS-WitLegacy — the legacy host</title><style>
+:root{--bg:#0d1117;--panel:#161b22;--line:#2a3240;--ink:#e6edf3;--dim:#9aa7b4;--acc:#3fb950;--good:#3fb950;--warn:#d29922}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.55 -apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif}
+.wrap{max-width:1020px;margin:0 auto;padding:28px 20px 60px}
+h1{font-size:34px;margin:0 0 4px}h2{font-size:21px;margin:34px 0 10px;border-bottom:2px solid var(--acc);padding-bottom:5px}
+.sub{color:var(--dim);font-size:17px;margin:0 0 14px}
+.chips{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0 4px}.chip{background:var(--panel);border:1px solid var(--line);border-radius:999px;padding:3px 12px;font-size:13px;color:var(--dim)}.chip b{color:var(--ink)}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin:14px 0}
+.tile{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 10px;text-align:center}
+.tile .n{font-size:30px;font-weight:700}.tile .l{color:var(--dim);font-size:12.5px;text-transform:uppercase;letter-spacing:.06em}
+table{width:100%;border-collapse:collapse;margin:8px 0 4px}th,td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--line);font-size:14.5px}
+th{color:var(--dim);font-size:12.5px;text-transform:uppercase;letter-spacing:.05em}tr:nth-child(even) td{background:#12161d}
+.bar{height:16px;background:#21262d;border-radius:4px;overflow:hidden;min-width:180px}.bar i{display:block;height:100%;background:var(--acc)}.bar.hot i{background:#f85149}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:10px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:13px 15px}.card h3{margin:0 0 5px;font-size:16px}.card p{margin:0;color:var(--dim);font-size:14px}
+code,kbd{font-family:ui-monospace,Menlo,Consolas,monospace;background:#21262d;border-radius:4px;padding:1px 5px;font-size:.92em}
+pre{background:#010409;border:1px solid var(--line);border-radius:8px;padding:14px;overflow-x:auto;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px;line-height:1.45}
+.note{color:var(--dim);font-size:14px}footer{margin-top:44px;border-top:1px solid var(--line);padding-top:12px;color:var(--dim);font-size:13px}
+.st{font-weight:600}.st.open{color:var(--warn)}.st.released{color:var(--acc)}.st.planned{color:#bc8cff}.st.picked,.st.packed{color:var(--good)}
+.term{background:#000;color:#33ff66;border:1px solid #1d3;line-height:1.35}</style></head><body><div class="wrap">
+<h1>WMS-WitLegacy</h1>
+<p class="sub">A mock <b>legacy warehouse host</b> — no API, no JSON, no events. Files and batches: fixed-width records dropped in an <code>IN/</code> folder, results staged one batch and released the next, extracts on a schedule, and an 80×24 character terminal for the operators. Python standard library only. It runs the <i>same canonical warehouse</i> as the modern host, value for value.</p>
+<div class="chips"><span class="chip">Status: <b>complete — Phase 1 closed</b></span><span class="chip">Main: <b>4a7bd708</b></span><span class="chip">Tests: <b>84/84</b></span><span class="chip">Contract: <b>README, frozen at main</b></span></div>
+<div class="tiles">
+<div class="tile"><div class="n">23</div><div class="l">master tables</div></div>
+<div class="tile"><div class="n">12</div><div class="l">act codes</div></div>
+<div class="tile"><div class="n">80×24</div><div class="l">terminal</div></div>
+<div class="tile"><div class="n">2200–0500</div><div class="l">nightly window</div></div>
+<div class="tile"><div class="n">3,779</div><div class="l">units on hand</div></div>
+<div class="tile"><div class="n">2</div><div class="l">batches to a result</div></div>
+</div>
+<h2>The operator terminal</h2>
+<pre class="term">                    WAREHOUSE MANAGEMENT SYSTEM - MAIN MENU                     
+                                                                                
+    1. RECEIVING                                                                
+    2. PUTAWAY                                                                  
+    3. INVENTORY                                                                
+    4. ORDERS                                                                   
+    5. PICKING                                                                  
+    6. PACKING                                                                  
+    7. SHIPPING                                                                 
+    8. CYCLE COUNTS                                                             
+    9. EXCEPTIONS                                                               
+   10. LABOR                                                                    
+   11. BATCH CONTROL                                                            
+                                                                                
+   BATCH 00000000   OPEN ALARMS 000                                             
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+SELECTION ===>                                                                  
+F3=Exit  F12=Back  ENTER=Submit                                                 </pre>
+<p class="note">Green on black, function keys, no mouse. This is the screen an operator actually works from — receiving, picking, batch control and all.</p>
+<h2>A real exchange, in fixed width</h2>
+<p class="note">Generated by this host, just now, from the seeded dataset — not typed for this page. An outside system drops a release act for order SO-5006:</p>
+<pre>HEXT0000100000001202601121100                                                                                                                          
+D000001RLSEW-01    SO-5006     0000                    000000000                                   000000000000                                        
+T000001000000000000                                                                                                                                    </pre>
+<p class="note">The batch processes it; the <i>next</i> batch releases the confirm file:</p>
+<pre>HEXT0000100000001CF0000000120260112                                               
+C00000001000001RLSESO-5006     0000                    000000000OK0000000120260112
+T00000001                                                                         </pre>
+<h2>The twelve acts</h2>
+<table><tr><th>Code</th><th>Meaning</th></tr><tr><td><code>RCPT</code></td><td>RECEIVE TO DOCK</td></tr><tr><td><code>PUTA</code></td><td>PUTAWAY DOCK TO BIN</td></tr><tr><td><code>ADJT</code></td><td>INVENTORY ADJUST</td></tr><tr><td><code>RLSE</code></td><td>RELEASE ORDER</td></tr><tr><td><code>PICK</code></td><td>PICK TO ORDER</td></tr><tr><td><code>SHRT</code></td><td>SHORT AN ORDER LINE</td></tr><tr><td><code>PACK</code></td><td>PACK ORDER (MAKES DELIVERY)</td></tr><tr><td><code>LOAD</code></td><td>PUT DELIVERY ON LOAD</td></tr><tr><td><code>SHIP</code></td><td>SHIP LOAD</td></tr><tr><td><code>CNTS</code></td><td>COUNT SUBMIT</td></tr><tr><td><code>EXCP</code></td><td>LOG EXCEPTION</td></tr><tr><td><code>LABR</code></td><td>LABOR START/END</td></tr></table>
+<p class="note">Short work is a first-class citizen here too: <code>SHRT</code> shorts an order line and raises the <code>SP</code> “SHORT PICK/SHIPMENT” exception flag — one flag from the floor, one from the shipment, because the shipment's record is what a delivery is read against. Bad records don't stop the batch: they come back in the reject file with a code (for example <code>R01</code> — bad record (length, type, or host could not process it)) and the rest of the file still processes.</p>
+<h2>Run it yourself</h2>
+<pre>git clone https://github.com/Grateful-Ed/WMS-WitLegacy.git
+cd WMS-WitLegacy
+python3 -m legacy_wms HOSTDIR tui      # the terminal
+python3 -m legacy_wms HOSTDIR batch    # run a batch</pre>
+<footer>Canonical dataset sha256 a5d1e5d8d467e448d496e14ad0e8bf81bacef2bd083d98ab4e43d1c501183b59 · Built for the Witness fresh-build program · This page is a static showcase — the host itself runs locally, as a real host would.</footer>
+</div></body></html>
