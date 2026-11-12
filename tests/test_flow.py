@@ -96,8 +96,16 @@ class FlowTests(HostCase):
         t = packs()[0]
         self.assertEqual((t["ORNO"], t["TKST"], t["TKNO"]), (o, "OP", "TK-0023"))
         self.assertEqual(t["ZNID"], self.h.get("LOC", picks[-1]["FLC"])["LCZN"])
+        trn_before = len(self.h.t["TRN"])
         self.send(2, [act("PACK", DOC=o, USR="W-14")])
         order = self.h.get("OHD", o)
+        pk = [r for r in self.h.t["TRN"].values() if r["LGTY"] == "PK"]
+        self.assertEqual(len(pk), len(want))
+        self.assertEqual(len(self.h.t["TRN"]) - trn_before, len(want))
+        self.assertEqual({r["ITNO"]: r["QTY"] for r in pk}, want)
+        for r in pk:
+            self.assertEqual((r["FLOC"], r["TLOC"], r["REF"]), ("PK-" + o, "PAL-009", o))
+            self.assertTrue(r["LGNO"].startswith("LG-"))
         self.assertEqual(order["ORST"], "PK")
         pal = self.h.get("PAL", "PAL-009")             # next after PAL-008
         self.assertEqual((pal["PDIR"], pal["PLST"], pal["DLNO"]), ("OU", "SL", order["DLNO"]))

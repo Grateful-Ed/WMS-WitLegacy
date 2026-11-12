@@ -628,7 +628,7 @@ Record length: 57.
 Notes:
 
 * `INV` holds stock by location, item and stock status. Locations are bins, pallets, or pick locations `PK-<order>`.
-* `TRN` is the stock ledger. Opening rows come from the dataset. The host adds one row for each stock movement (`RC`, `PU`, `AJ`, `PI`, `SH`) with ids `LG-nnnnnn`.
+* `TRN` is the stock ledger. Opening rows come from the dataset. The host adds one row for each stock movement (`RC`, `PU`, `AJ`, `PI`, `PK`, `SH`) with ids `LG-nnnnnn`.
 * Orders belong to a wave through `OHD.WVNO`. Deliveries belong to a load through `DLV.LDNO`. Pallets belong to a delivery through `PAL.DLNO`.
 * `COD` is the code table dump (section 8). Decode every 2-character code from it.
 
@@ -835,6 +835,7 @@ Record length: 19.
 | AJ | ADJUSTMENT |
 | OP | OPENING BALANCE |
 | PI | PICK |
+| PK | PACK |
 | PU | PUTAWAY |
 | RC | RECEIPT |
 | SH | SHIP |
@@ -980,7 +981,7 @@ The dataset block `labor_overload` is a scenario note, not warehouse state. It i
 * Seconds in dataset times are dropped (`HHMM`).
 * Waves are not changed by acts. Wave and order status change only by `RLSE`, `PICK`, `SHRT`, `PACK`, `LOAD`, `SHIP`.
 * PACK makes the outbound pallet (like the dataset's own packed deliveries). Its lane is blank until LOAD sets `STG-<load door>`. One pallet carries all the stock of the order.
-* The pack move (`PK-<order>` to pallet) writes no `TRN` row, because no ledger type exists for it and the code table is held as decided. Pick and ship moves do write rows.
+* The pack move (`PK-<order>` to pallet) writes one `TRN` row per item, type `PK`, from the pick location to the pallet, `REF` = order.
 * The pack task is made when the order becomes fully picked. Zone = zone of the last bin picked (blank if the last step was a `SHRT`). It is unassigned. `QTY` = total picked. `FBIN` = `PK-<order>`. `TBIN` and `PLNO` are filled when PACK closes it.
 * Pallet ids and task ids continue after the highest dataset number (`PAL-nnn`, `TK-nnnn`). A minted id skips any id already in use.
 * Unknown source or unreadable file gives an alarm and no result file.

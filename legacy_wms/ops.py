@@ -273,6 +273,7 @@ def _pack(h, rec, adate, atime, now):
     for k, inv in sorted(h.t["INV"].items()):
         if k[0] == ploc and inv["ONHD"]:
             qty = inv["ONHD"]
+            _trn(h, now, "PK", inv["ITNO"], ploc, plno, qty, o["ORNO"])
             _inv_add(h, ploc, inv["ITNO"], inv["IVST"], -qty)
             _inv_add(h, plno, inv["ITNO"], "SL", qty)
     for t in _open_tasks(h, "PA"):

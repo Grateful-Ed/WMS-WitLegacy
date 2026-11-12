@@ -96,7 +96,7 @@ USSH = {"DY": "DAY", "SW": "SWING", "NT": "NIGHT"}
 USST = {"AC": "ACTIVE", "IA": "INACTIVE"}
 LBST = {"OP": "OPEN", "CL": "CLOSED"}
 LGTY = {"OP": "OPENING BALANCE", "RC": "RECEIPT", "PU": "PUTAWAY", "AJ": "ADJUSTMENT",
-        "PI": "PICK", "SH": "SHIP"}
+        "PI": "PICK", "PK": "PACK", "SH": "SHIP"}
 
 # Reason code for ADJT (RSN field).
 ADJ_REASONS = {"01": "COUNT CORRECTION", "02": "DAMAGE", "03": "FOUND",
@@ -133,7 +133,7 @@ WORDS = {
     "USSH": {"day": "DY", "swing": "SW", "night": "NT"},
     "USST": {"active": "AC", "inactive": "IA"},
     "LGTY": {"opening": "OP", "receipt": "RC", "putaway": "PU", "adjustment": "AJ",
-             "pick": "PI", "ship": "SH"},
+             "pick": "PI", "pack": "PK", "ship": "SH"},
 }
 
 # Every code table, for the COD file: name -> dict.
