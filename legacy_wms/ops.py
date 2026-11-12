@@ -149,7 +149,9 @@ def apply_act_safe(h, rec, now, log=None):
         raise
     except Exception as e:      # noqa: BLE001 - one bad record must not stop the batch
         t, seq, alarms, ledger, src, ext = snap      # restore in place: no stale references
-        for name in h.t:
+        for name in [n for n in h.t if n not in t]:     # tables the act added
+            del h.t[name]
+        for name in t:                                   # every snapshot table, even one deleted
             h.t[name] = t[name]
         h.seq.clear()
         h.seq.update(seq)
