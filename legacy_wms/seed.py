@@ -60,13 +60,7 @@ def _code(table, v, what):
         raise SeedError(f"{what}: no code for {v!r} in table {table}")
 
 
-def _maxnum(ids):
-    best = 0
-    for i in ids:
-        m = re.search(r"(\d+)$", str(i))
-        if m:
-            best = max(best, int(m.group(1)))
-    return best
+from .store import max_number as _maxnum
 
 
 def _req(ds, name):

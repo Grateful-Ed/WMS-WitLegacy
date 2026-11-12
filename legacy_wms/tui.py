@@ -129,7 +129,7 @@ class App:
         rec.update(data)
         now = self.clock()
         try:
-            ops.apply_act(self.h, rec, now)
+            ops.apply_act_safe(self.h, rec, now, lambda t: B.log(self.h, now, t))
             self.h.save()
             msg = "ACT ACCEPTED"
         except ops.Reject as e:

@@ -1,11 +1,30 @@
 """Host library: master files, control files, folders. All state is flat files."""
 import os
+import re
 from pathlib import Path
 
 from .fixed import LAYOUTS, KEYS, SRC, LDG, ALM, EXT
 
 DIRS = ["MASTER", "CTL", "IN", "STAGE", "OUT", "ARCH", "ERR", "LOG"]
 SEQ_NAMES = ["EXC", "CCN", "LBL", "DLV", "TRN", "PAL", "TSK"]
+
+
+# Sequence name -> (master table, id format). Allocation skips ids in use.
+SEQ_FORMATS = {
+    "EXC": ("EXC", "EX-{:03d}"), "CCN": ("CCN", "CC-{:03d}"), "LBL": ("LBL", None),
+    "DLV": ("DLV", "OD-{:04d}"), "TRN": ("TRN", "LG-{:06d}"), "PAL": ("PAL", "PAL-{:03d}"),
+    "TSK": ("TSK", "TK-{:04d}"),
+}
+
+
+def max_number(ids):
+    """Highest trailing number in a list of ids (ints count as themselves)."""
+    best = 0
+    for i in ids:
+        m = re.search(r"(\d+)$", str(i))
+        if m:
+            best = max(best, int(m.group(1)))
+    return best
 
 
 def _atomic_write(path, text):
@@ -55,6 +74,22 @@ class Host:
         self.seq[table] += 1
         return self.seq[table]
 
+    def alloc(self, name):
+        """Next id for a sequence. Never returns an id already in use."""
+        tbl, fmt = SEQ_FORMATS[name]
+        while True:
+            n = self.next_seq(name)
+            ident = fmt.format(n) if fmt else n
+            if (ident,) not in self.t[tbl]:
+                return ident
+
+    def reconcile_sequences(self):
+        """A counter never starts below the highest number in use."""
+        for name, (tbl, _) in SEQ_FORMATS.items():
+            top = max_number(k[0] for k in self.t[tbl])
+            if self.seq.get(name, 0) < top:
+                self.seq[name] = top
+
     # -- persistence
     def save(self):
         for name, lay in LAYOUTS.items():
@@ -102,6 +137,7 @@ class Host:
                 if ln.strip():
                     self.seq[ln[:4].strip()] = int(ln[4:12])
         self.stamp = self.batch + 1
+        self.reconcile_sequences()
 
     @classmethod
     def open(cls, root):
@@ -119,7 +155,8 @@ class Host:
 
     def raise_alarm(self, code, srcid, ictl, text, now):
         for a in self.alarms:
-            if (a["ALCD"], a["SRCID"], a["ICTL"], a["ALST"]) == (code, srcid, ictl, "OP"):
+            if (a["ALCD"], a["SRCID"], a["ICTL"], a["ALTX"], a["ALST"]) == \
+                    (code, srcid, ictl, text[:40], "OP"):
                 return a  # already open: do not duplicate
         a = {"ALNO": len(self.alarms) + 1, "ALCD": code, "ALDT": now[0], "ALTM": int(now[1]),
              "SRCID": srcid, "ICTL": ictl, "ALST": "OP", "ALTX": text[:40]}

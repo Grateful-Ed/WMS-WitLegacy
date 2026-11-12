@@ -31,8 +31,12 @@ class TuiTests(HostCase):
         from legacy_wms import ops
         from legacy_wms.fixed import DETAIL
         self.h.get("OHD", "SO-5006")["ORST"] = "RL"
+        line = self.h.get("OLN", "SO-5006", 1)
+        bin_ = next(k[0] for k, r in sorted(self.h.t["INV"].items())
+                    if k[1] == line["ITNO"] and k[2] == "AV" and r["ONHD"] >= line["OQTY"])
         rec = DETAIL.blank()
-        rec.update(ACT="SHRT", DOC="SO-5006", LIN=1, USR="W-09")
+        rec.update(ACT="PICK", DOC="SO-5006", LIN=1, ITM=line["ITNO"], QTY=line["OQTY"],
+                   FLC=bin_, USR="W-09")
         ops.apply_act(self.h, rec, DAY)            # last line done: pack task now open
         self.h.save()
         t = self.run_keys(["6", "SO-5006", "W-14", "F3"])

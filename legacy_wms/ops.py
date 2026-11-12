@@ -2,6 +2,8 @@
 
 Every act validates first and changes data last, so a reject leaves no trace.
 """
+import copy
+
 from . import codes as C
 
 
@@ -36,8 +38,7 @@ def _inv_add(h, lcno, itno, ivst, qty):
 
 
 def _trn(h, now, typ, itno, floc, tloc, qty, ref):
-    n = h.next_seq("TRN")
-    h.put("TRN", {"LGNO": f"LG-{n:06d}", "LGDT": now[0], "LGTM": int(now[1]), "LGTY": typ,
+    h.put("TRN", {"LGNO": h.alloc("TRN"), "LGDT": now[0], "LGTM": int(now[1]), "LGTY": typ,
                   "ITNO": itno, "FLOC": floc, "TLOC": tloc, "QTY": qty, "REF": ref})
 
 
@@ -85,6 +86,13 @@ def _complete_task(h, row, rec, adate, atime):
     h.touch(row)
 
 
+def _moved(h, typ, itno, floc, ref):
+    """Quantity already moved by earlier acts of this type (from the ledger)."""
+    return sum(r["QTY"] for r in h.t["TRN"].values()
+               if r["LGTY"] == typ and r["ITNO"] == itno and r["FLOC"] == floc
+               and r["REF"] == ref)
+
+
 def _open_tasks(h, tkty):
     return [r for k, r in sorted(h.t["TSK"].items())
             if r["TKTY"] == tkty and r["TKST"] == "OP"]
@@ -97,10 +105,7 @@ def _eval_order_picked(h, o, now, last_bin=""):
     if ls and all(l["LNST"] in ("PD", "SX") for l in ls) and o["ORST"] != "PD":
         o["ORST"] = "PD"
         loc = h.get("LOC", last_bin) if last_bin else None
-        n = h.next_seq("TSK")
-        while h.get("TSK", f"TK-{n:04d}"):
-            n = h.next_seq("TSK")
-        h.put("TSK", {"TKNO": f"TK-{n:04d}", "TKTY": "PA", "TKST": "OP",
+        h.put("TSK", {"TKNO": h.alloc("TSK"), "TKTY": "PA", "TKST": "OP",
                       "ZNID": loc["LCZN"] if loc else "", "ASGN": "", "WVNO": o["WVNO"],
                       "ORNO": o["ORNO"], "LNNO": 0, "ITNO": "",
                       "QTY": sum(l["PQTY"] for l in ls), "FBIN": C.PICK_PREFIX + o["ORNO"],
@@ -111,15 +116,11 @@ def _eval_order_picked(h, o, now, last_bin=""):
 
 
 def _new_pallet_no(h):
-    n = h.next_seq("PAL")
-    while h.get("PAL", f"PAL-{n:03d}"):
-        n = h.next_seq("PAL")
-    return f"PAL-{n:03d}"
+    return h.alloc("PAL")
 
 
 def _log_exception(h, kind, entity, eid, sev, text, rec, now):
-    n = h.next_seq("EXC")
-    h.put("EXC", {"EXNO": f"EX-{n:03d}", "EXKD": kind, "EXEN": entity, "EXEI": eid,
+    h.put("EXC", {"EXNO": h.alloc("EXC"), "EXKD": kind, "EXEN": entity, "EXEI": eid,
                   "EXSV": sev, "EXRS": text[:60], "EXST": "OP", "EXDT": now[0],
                   "EXTM": int(now[1]), "EXBY": rec["USR"]})
 
@@ -133,6 +134,22 @@ def apply_act(h, rec, now):
     adate = rec["ADT"] if rec["ADT"] != "00000000" else now[0]
     atime = rec["ATM"] if rec["ATM"] else int(now[1])
     _ACT_FUNCS[act](h, rec, adate, atime, (adate, f"{atime:04d}"))
+
+
+def apply_act_safe(h, rec, now, log=None):
+    """apply_act, but an unexpected error rejects the record (R01) and rolls
+    back anything it half did. Rejects and layout errors pass through."""
+    snap = copy.deepcopy((h.t, h.seq))
+    try:
+        apply_act(h, rec, now)
+    except Reject:
+        raise
+    except Exception as e:      # noqa: BLE001 - one bad record must not stop the batch
+        h.t, h.seq = snap
+        if log:
+            log(f"UNEXPECTED ERROR IN ACT {rec.get('ACT')} SEQ {rec.get('SEQ')}: "
+                f"{type(e).__name__} {e}")
+        raise Reject("R01")
 
 
 def _qty_pos(rec):
@@ -176,17 +193,19 @@ def _puta(h, rec, adate, atime, now):
     if not any(r["ONHD"] for k, r in h.t["INV"].items() if k[0] == rec["FLC"]):
         pal["PLST"] = "PC"
         h.touch(pal)
+    done = rec["QTY"] + _moved(h, "PU", rec["ITM"], rec["FLC"], rec["FLC"])
+    _trn(h, now, "PU", rec["ITM"], rec["FLC"], rec["TLC"], rec["QTY"], rec["FLC"])
     for t in _open_tasks(h, "PU"):
-        if t["PLNO"] == rec["FLC"] and t["ITNO"] == rec["ITM"]:
+        if t["PLNO"] == rec["FLC"] and t["ITNO"] == rec["ITM"] and done >= t["QTY"]:
             _complete_task(h, t, rec, adate, atime)
             break
-    _trn(h, now, "PU", rec["ITM"], rec["FLC"], rec["TLC"], rec["QTY"], rec["FLC"])
 
 
 def _adjt(h, rec, adate, atime, now):
     _need(rec["ITM"] != "" and rec["FLC"] != "", "R07")
+    _need(rec["SGN"] != "", "R07")
     _need(rec["RSN"] in C.ADJ_REASONS, "R06")
-    _need(rec["SGN"] in ("+", "-", ""), "R06")
+    _need(rec["SGN"] in ("+", "-"), "R06")
     _qty_pos(rec)
     _item(h, rec["ITM"], active=False)
     sign = -1 if rec["SGN"] == "-" else 1
@@ -234,12 +253,13 @@ def _pick(h, rec, adate, atime, now):
     h.touch(line)
     o["ORST"] = "PI"
     _eval_order_picked(h, o, now, rec["FLC"])
+    done = rec["QTY"] + _moved(h, "PI", rec["ITM"], rec["FLC"], o["ORNO"])
+    _trn(h, now, "PI", rec["ITM"], rec["FLC"], ploc, rec["QTY"], o["ORNO"])
     for t in _open_tasks(h, "PK"):
         if (t["ORNO"], t["LNNO"], t["FBIN"]) == (o["ORNO"], line["LNNO"], rec["FLC"]) \
-                and t["QTY"] == rec["QTY"]:
+                and done >= t["QTY"]:
             _complete_task(h, t, rec, adate, atime)
             break
-    _trn(h, now, "PI", rec["ITM"], rec["FLC"], ploc, rec["QTY"], o["ORNO"])
 
 
 def _shrt(h, rec, adate, atime, now):
@@ -262,8 +282,8 @@ def _pack(h, rec, adate, atime, now):
     _need(rec["DOC"] != "", "R07")
     o = _order(h, rec["DOC"])
     _need(o["ORST"] == "PD", "B12")
-    n = h.next_seq("DLV")
-    dlno = f"OD-{n:04d}"
+    _need(sum(l["PQTY"] for l in _lines(h, o["ORNO"])) > 0, "B12")   # fully shorted
+    dlno = h.alloc("DLV")
     plno = _new_pallet_no(h)
     h.put("DLV", {"DLNO": dlno, "ORNO": o["ORNO"], "DLST": "PK", "LDNO": "",
                   "SHDT": "00000000", "SHTM": 0})
@@ -347,11 +367,10 @@ def _cnts(h, rec, adate, atime, now):
     _bin(h, rec["FLC"])
     sysq = _on_hand(h, rec["FLC"], rec["ITM"], "AV")
     var = rec["QTY"] - sysq
-    cc = next((r for k, r in sorted(h.t["CCN"].items()) if r["CCST"] == "OP"
+    cc = next((r for k, r in sorted(h.t["CCN"].items()) if r["CCST"] in ("OP", "RC")
                and r["BNNO"] == rec["FLC"] and r["ITNO"] == rec["ITM"]), None)
     if cc is None:
-        n = h.next_seq("CCN")
-        cc = {"CCNO": f"CC-{n:03d}", "BNNO": rec["FLC"], "ITNO": rec["ITM"], "CCST": "OP",
+        cc = {"CCNO": h.alloc("CCN"), "BNNO": rec["FLC"], "ITNO": rec["ITM"], "CCST": "OP",
               "TKNO": "", "SQTY": 0, "CQTY": 0, "CVAR": 0, "LCB": 0}
     cc.update({"SQTY": sysq, "CQTY": rec["QTY"], "CVAR": var,
                "CCST": "CM" if var == 0 else "RC"})
@@ -379,7 +398,7 @@ def _labr(h, rec, adate, atime, now):
     if rec["FLG"] == "ST":
         _need(rec["RSN"] in C.TASKS, "R06")
         _need(not open_rows, "B16")
-        h.put("LBL", {"LBNO": h.next_seq("LBL"), "USNO": rec["USR"], "TKCD": rec["RSN"],
+        h.put("LBL", {"LBNO": h.alloc("LBL"), "USNO": rec["USR"], "TKCD": rec["RSN"],
                       "SDAT": adate, "STIM": atime, "EDAT": "00000000", "ETIM": 0,
                       "UNIT": 0, "LBST": "OP"})
     else:

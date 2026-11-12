@@ -35,7 +35,7 @@ Folders under the host directory:
 | `CTL/` | Control files: batch number, sequences, sources, ledger, alarms, extract control, window. |
 | `LOG/` | `BATCH.LOG`. |
 
-All files are ASCII text. Every record in a file has the same length. Records end with a line feed. Text is upper case. There are no nulls: text uses spaces, numbers use zero fill. Dates are `YYYYMMDD`. Times are `HHMM`.
+All files are ASCII text. Every record in a file has the same length, except extract files: their header and trailer are not padded to the table width (section 5). Records end with a line feed. Text is upper case. There are no nulls: text uses spaces, numbers use zero fill. Dates are `YYYYMMDD`. Times are `HHMM`.
 
 Field kinds: `A` text (left aligned, space filled) - `N` unsigned number (right aligned, zero filled) - `S` signed number (first character `+` or `-`, then zero filled digits) - `D` date `YYYYMMDD` (`00000000` means none).
 
@@ -50,7 +50,13 @@ Field kinds: `A` text (left aligned, space filled) - `N` unsigned number (right 
   * Lower than expected (re-send): not processed. Same content: reject record `F04`. Different content: reject record `F08`, alarm `A02`, file to `ERR/`.
   * Higher than expected (gap): alarm `A01`. The file and every later file of that source are **held** in `IN/`. Other sources continue. If the missing file arrives, the next batch processes it and the held files in order, and the alarm closes. The operator can instead choose **Skip gap** (Batch Control option 5): the missing numbers are written to the ledger as `SK` and processing resumes at the lowest held file.
 * **Partial failure.** Each detail record is validated and applied alone. Bad records go to the reject file with a code. The rest of the file still processes. A file-level fault (trailer missing `F02`, count or hash mismatch `F03`, name not equal to header `F07`) rejects the whole file.
-* **Unknown source** (`A04`) or **unreadable file** (`A03`): file moved to `ERR/`, alarm raised, no result file (the sender cannot be identified or trusted). Operators register sources first (Batch Control option 7, or `python -m legacy_wms HOSTDIR src SOURCEID`).
+* **Whole-file refusals.** The file **name** (`SOURCE.NNNNNNNN`) says who sent it and which number it is.
+  * Name cannot be read (for example `notes.txt`): file to `ERR/`, alarm `A03`.
+  * Source in the name is not registered: file to `ERR/`, alarm `A04`.
+  * Header unreadable (garbage, empty, bad header date) and the number is the next expected: file to `ERR/`, alarm `A03` kept, the number is **used up** (ledger row `UR`), no result file (the sender is not trusted). The sender's next file processes normally.
+  * Header says another source or number than the name (`F07`): the reject goes under the **name's** source. If it is that source's next number, the number is used up. The header's source is not touched.
+  * A late file for a number the operator skipped is a duplicate: archived, reject `F04`, no `A02`.
+  Operators register sources first (Batch Control option 7, or `python -m legacy_wms HOSTDIR src SOURCEID`).
 * **Commit.** Master data, ledger and control files are saved at the end of the batch. Files are replaced, never edited in place.
 
 ## 3. Inbound file (outside layer to host)
@@ -234,7 +240,7 @@ Record length: 9.
 | F04 | DUPLICATE OR SKIPPED FILE - NOT PROCESSED |
 | F07 | FILE NAME DOES NOT MATCH HEADER |
 | F08 | SAME CONTROL NO, DIFFERENT CONTENT |
-| R01 | BAD RECORD LENGTH OR TYPE |
+| R01 | BAD RECORD (LENGTH, TYPE, OR HOST COULD NOT PROCESS IT) |
 | R02 | UNKNOWN ACT CODE |
 | R03 | NON-NUMERIC IN NUMERIC FIELD |
 | R04 | BAD DATE |
@@ -258,7 +264,7 @@ Alarms are kept in `CTL/ALARM.DAT` and shown on the terminal (main menu shows th
 One file per table: `TBL.Xnnnnnnnn` in `OUT/`, `nnnnnnnn` = extract control number for that table. First line is the header, last line is the trailer, lines between are table records in the table layout (section 6). Header and trailer are not padded.
 
 * **Full** (`MODE` = `F`): every row of the table.
-* **Delta** (`MODE` = `D`): rows whose last-change batch number (`LCB`) is newer than the last extract of that table. `FBCH` in the header is the batch number the delta starts after. A delta can repeat a row it already sent. The reader replaces rows by key. A full extract plus all deltas after it rebuilds the table. Rows are never deleted (stock rows go to quantity zero).
+* **Delta** (`MODE` = `D`): rows whose last-change batch number (`LCB`) is newer than the last extract of that table. `FBCH` in the header is the batch number the delta starts after. A delta can repeat a row it already sent. The reader replaces rows by key. A full extract plus all deltas after it rebuilds the table. A delta built before any full extract has zero rows by design: build a full extract first. Rows are never deleted (stock rows go to quantity zero).
 * Extract jobs run from Batch Control (options 2 and 3) or `python -m legacy_wms HOSTDIR extract D|F`. Build a full extract first.
 * `LCB` is the batch number in which the row last changed. Terminal changes made between batches carry the next batch number.
 
@@ -630,6 +636,7 @@ Notes:
 * `INV` holds stock by location, item and stock status. Locations are bins, pallets, or pick locations `PK-<order>`.
 * `TRN` is the stock ledger. Opening rows come from the dataset. The host adds one row for each stock movement (`RC`, `PU`, `AJ`, `PI`, `PK`, `SH`) with ids `LG-nnnnnn`.
 * Orders belong to a wave through `OHD.WVNO`. Deliveries belong to a load through `DLV.LDNO`. Pallets belong to a delivery through `PAL.DLNO`.
+* Cycle counts (`CCN`): a quantity of 0 with status `OP` means not yet counted. The status tells it apart from a true zero count. A recount submit updates the same count record.
 * `COD` is the code table dump (section 8). Decode every 2-character code from it.
 
 ## 7. Control files
@@ -985,4 +992,10 @@ The dataset block `labor_overload` is a scenario note, not warehouse state. It i
 * The pack task is made when the order becomes fully picked. Zone = zone of the last bin picked (blank if the last step was a `SHRT`). It is unassigned. `QTY` = total picked. `FBIN` = `PK-<order>`. `TBIN` and `PLNO` are filled when PACK closes it.
 * Pallet ids and task ids continue after the highest dataset number (`PAL-nnn`, `TK-nnnn`). A minted id skips any id already in use.
 * Unknown source or unreadable file gives an alarm and no result file.
+* Known limit: the batch commit is not atomic. File moves and the save of master and control files are separate steps, and an interruption between them can leave them out of step. Counter reconciliation protects the data: when the host opens, every id counter is raised to the highest number in use, and every allocation skips ids already in use, so a lost or old `SEQ.CTL` can never overwrite a live record.
+* Tasks close by accumulation: a putaway task closes when the putaway for its pallet and item reaches the task quantity. A pick task closes when picks of that item from that bin for that order reach the task quantity (counted from the ledger).
+* PACK is refused (`B12`) when the order's picked quantity is zero (fully shorted).
+* ADJT needs `SGN` (`+` or `-`). A blank sign is `R07`.
+* An unexpected error in one record rejects that record `R01`, undoes anything it half did, and is written to `BATCH.LOG`. The rest of the batch goes on.
+* An F07 file with a number that is not the next expected is rejected and moved to `ERR/` without using a number.
 * The `EX-nnn`, `CC-nnn`, `OD-nnnn` and `LG-nnnnnn` ids continue after the highest dataset number.

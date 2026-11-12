@@ -1,6 +1,7 @@
 """The batch job. Nothing is processed when a file arrives; an operator
 (or a timer) runs run_batch(). Results go out one batch later."""
 import os
+import re
 
 from . import ops
 from .fixed import (DETAIL, HEADER, TRAILER, RECLEN, CONF, REJ, OUT_HEADER,
@@ -32,7 +33,7 @@ def in_window(h, now):
 
 def log(h, now, text):
     with open(h.p("LOG", "BATCH.LOG"), "a") as f:
-        f.write(f"{now[0]} {now[1]} {text}\n")
+        f.write(f"{now[0]} {now[1]} {text.upper()}\n")
 
 
 class Summary:
@@ -47,9 +48,9 @@ class Summary:
         self.rej = 0
 
     def __repr__(self):
-        return (f"BATCH {self.batch:08d} window={self.window} files={self.files} "
-                f"held={self.held} dups={self.dups} ok={self.ok} rej={self.rej} "
-                f"released={self.released}")
+        return (f"BATCH {self.batch:08d} WINDOW={'Y' if self.window else 'N'} "
+                f"FILES={self.files} HELD={self.held} DUPS={self.dups} OK={self.ok} "
+                f"REJ={self.rej} RELEASED={self.released}")
 
 
 def _release_staged(h):
@@ -115,7 +116,7 @@ def _process_file(h, text, hdr, name, now, confs, rejs, summ):
                 rec = DETAIL.unpack(ln)
                 if rec["REC"] != "D":
                     raise LayoutError("R01")
-                ops.apply_act(h, rec, now)
+                ops.apply_act_safe(h, rec, now, lambda t: log(h, now, t))
             except LayoutError as e:
                 code = e.code
             except ops.Reject as e:
@@ -167,6 +168,19 @@ def run_batch(h, now, trigger="OPER"):
     return summ
 
 
+NAME_RE = re.compile(r"^([A-Z0-9]{1,8})\.(\d{8})$")
+
+
+def _consume(h, src, ictl, text, name, now, disp):
+    """A whole-file refusal still uses up the control number."""
+    h.ledger.append({"SRCID": src, "ICTL": ictl, "CKSM": checksum(text), "BTCH": h.batch,
+                     "DISP": disp, "NREC": 0, "NOK": 0, "NRJ": 1, "PDAT": now[0]})
+    row = h.src[src]
+    row["LAST"], row["NEXT"] = ictl, ictl + 1
+    _move(h, name, "ERR")
+    _close_gap_alarm(h, src, row["NEXT"])
+
+
 def _process_inbound(h, now, summ):
     confs, rejs = {}, {}
     held_srcs = set()
@@ -175,21 +189,25 @@ def _process_inbound(h, now, summ):
         if not path.is_file():
             continue
         text = path.read_text(encoding="latin-1")
-        hdr = _parse_header(text)
-        if hdr is None:
+        m = NAME_RE.match(name)
+        if not m:                                   # name cannot be read
             _move(h, name, "ERR")
-            h.raise_alarm("A03", "", 0, f"UNREADABLE {name}", now)
+            h.raise_alarm("A03", "", 0, f"BAD FILE NAME {name}", now)
             continue
-        src, ictl = hdr["SRC"], hdr["ICTL"]
+        src, ictl = m.group(1), int(m.group(2))     # the file name decides who and which
         if src not in h.src:
             _move(h, name, "ERR")
             h.raise_alarm("A04", src, ictl, f"UNKNOWN SOURCE {src}", now)
             continue
+        hdr = _parse_header(text)
         cf, rj = confs.setdefault(src, []), rejs.setdefault(src, [])
-        if name != f"{src}.{ictl:08d}":
-            _file_reject(rj, ictl, "F07", now, h.batch)
-            _move(h, name, "ERR")
+        if hdr is not None and (hdr["SRC"], hdr["ICTL"]) != (src, ictl):
+            _file_reject(rj, ictl, "F07", now, h.batch)       # reject belongs to the name
             summ.rej += 1
+            if src not in held_srcs and ictl == h.src[src]["NEXT"]:
+                _consume(h, src, ictl, text, name, now, "RJ")
+            else:
+                _move(h, name, "ERR")
             continue
         if src in held_srcs:
             summ.held += 1
@@ -197,20 +215,27 @@ def _process_inbound(h, now, summ):
         row = h.src[src]
         if ictl < row["NEXT"]:
             led = _ledger_find(h, src, ictl)
-            if led is not None and led["CKSM"] != checksum(text):
+            if hdr is None:
+                _move(h, name, "ERR")
+                h.raise_alarm("A03", src, ictl, f"UNREADABLE {name}", now)
+            elif led is not None and led["DISP"] != "SK" and led["CKSM"] != checksum(text):
                 _file_reject(rj, ictl, "F08", now, h.batch)
                 h.raise_alarm("A02", src, ictl, f"{src} CTL {ictl} CONTENT DIFFERS", now)
                 _move(h, name, "ERR")
-            else:
+                summ.rej += 1
+            else:                                   # duplicate, or a number the operator skipped
                 _file_reject(rj, ictl, "F04", now, h.batch)
                 _move(h, name, "ARCH", f".DUP{h.batch:08d}")
                 summ.dups += 1
-            summ.rej += 1
+                summ.rej += 1
         elif ictl > row["NEXT"]:
             h.raise_alarm("A01", src, row["NEXT"],
                           f"{src} EXPECTED {row['NEXT']} GOT {ictl}", now)
             held_srcs.add(src)
             summ.held += 1
+        elif hdr is None:                           # unreadable: alarm kept, number used, no result
+            h.raise_alarm("A03", src, ictl, f"UNREADABLE {name}", now)
+            _consume(h, src, ictl, text, name, now, "UR")
         else:
             _process_file(h, text, hdr, name, now, cf, rj, summ)
             _close_gap_alarm(h, src, row["NEXT"])
